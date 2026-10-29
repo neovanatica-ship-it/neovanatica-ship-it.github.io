@@ -1,5 +1,5 @@
 // Service worker sederhana: panel tetap bisa dibuka cepat dan dipasang sebagai aplikasi.
-const CACHE = "sabdamu-admin-v2";
+const CACHE = "sabdamu-admin-v3";
 const SHELL = ["./", "./index.html", "./app.js", "./style.css", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {

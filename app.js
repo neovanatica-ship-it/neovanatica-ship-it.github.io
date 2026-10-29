@@ -10,7 +10,8 @@
   }
 
   var app = document.getElementById("app");
-  var state = { user: null, tab: "quotes", quotes: [], main: null, listEl: null, searchEl: null, countEl: null };
+  var PAGE = 60;
+  var state = { user: null, tab: "quotes", quotes: [], main: null, listEl: null, searchEl: null, countEl: null, chipsEl: null, filter: "all", limit: PAGE, stopLive: null };
 
   var SEASONS = [
     ["ORDINARY", "Masa Biasa"], ["ADVENT", "Adven"], ["CHRISTMAS", "Natal"], ["LENT", "Prapaskah"], ["EASTER", "Paskah"]
@@ -159,6 +160,7 @@
   }
 
   function showTab(id) {
+    stopLive();
     state.tab = id;
     var buttons = document.querySelectorAll("nav.tabs button");
     for (var i = 0; i < buttons.length; i++) buttons[i].classList.toggle("active", buttons[i].getAttribute("data-tab") === id);
@@ -171,14 +173,17 @@
   /* ---------------------------------------------------------------- tab kutipan */
   function renderQuotesTab() {
     var search = h("input", { type: "search", placeholder: "Cari kutipan atau sumber…" });
-    var list = h("div", { class: "card" });
-    var count = h("p", { class: "muted" });
-    state.listEl = list; state.searchEl = search; state.countEl = count;
-    search.addEventListener("input", drawList);
+    var chips = h("div", { class: "chips", style: "margin:10px 0" });
+    var list = h("div", { class: "card compact" });
+    var count = h("p", { class: "muted", style: "margin:0 0 6px" });
+    state.listEl = list; state.searchEl = search; state.countEl = count; state.chipsEl = chips;
+    state.limit = PAGE;
+    search.addEventListener("input", function () { state.limit = PAGE; drawList(); });
     state.main.appendChild(h("div", { class: "row" },
       h("div", { class: "grow" }, search),
       h("button", { class: "btn gold small", text: "+ Tambah", onclick: function () { openEditor(null, {}); } })
     ));
+    state.main.appendChild(chips);
     state.main.appendChild(count);
     state.main.appendChild(list);
     loadQuotes();
@@ -193,30 +198,50 @@
     });
   }
 
+  function matchFilter(x) {
+    if (state.filter === "santo") return x.type === "santo";
+    if (state.filter === "sabda") return x.type === "sabda";
+    if (state.filter === "off") return !x.active;
+    return true;
+  }
+
+  function drawChips() {
+    var box = state.chipsEl;
+    if (!box) return;
+    var n = { all: state.quotes.length, santo: 0, sabda: 0, off: 0 };
+    state.quotes.forEach(function (x) { n[x.type === "sabda" ? "sabda" : "santo"]++; if (!x.active) n.off++; });
+    clear(box);
+    [["all", "Semua"], ["santo", "Santo"], ["sabda", "Sabda"], ["off", "Nonaktif"]].forEach(function (f) {
+      var c = h("button", { type: "button", class: "chip" + (state.filter === f[0] ? " on" : ""), text: f[1] + " " + n[f[0]] });
+      c.addEventListener("click", function () { state.filter = f[0]; state.limit = PAGE; drawList(); });
+      box.appendChild(c);
+    });
+  }
+
   function drawList() {
     var list = state.listEl;
     if (!list) return;
+    drawChips();
     var q = (state.searchEl ? state.searchEl.value : "").trim().toLowerCase();
     var items = state.quotes.filter(function (x) {
-      return !q || (x.text || "").toLowerCase().indexOf(q) >= 0 || (x.source || "").toLowerCase().indexOf(q) >= 0;
+      return matchFilter(x) && (!q || (x.text || "").toLowerCase().indexOf(q) >= 0 || (x.source || "").toLowerCase().indexOf(q) >= 0);
     });
-    var sabda = state.quotes.filter(function (x) { return x.type === "sabda"; }).length;
-    if (state.countEl) state.countEl.textContent = state.quotes.length + " kutipan (" + sabda + " sabda, " + (state.quotes.length - sabda) + " santo)";
+    if (state.countEl) state.countEl.textContent = "Menampilkan " + Math.min(items.length, state.limit) + " dari " + items.length + " kutipan";
     clear(list);
     if (!items.length) {
       list.appendChild(h("p", { class: "muted", text: state.quotes.length ? "Tidak ada yang cocok." : "Belum ada kutipan. Ketuk + Tambah atau gunakan tab Pindai." }));
       return;
     }
-    items.forEach(function (x) {
+    items.slice(0, state.limit).forEach(function (x) {
       var meta = x.source;
       if (x.feast_date) meta += " \u00B7 " + x.feast_date;
       if (x.type === "sabda" && x.tags && x.tags.length) meta += " \u00B7 " + x.tags.join(", ");
       list.appendChild(h("div", { class: "qitem" },
         h("div", { class: "body", onclick: function () { openEditor(x, {}); } },
-          h("div", {},
+          h("div", { class: "line1" },
             h("span", { class: "badge " + (x.type === "sabda" ? "sabda" : ""), text: x.type === "sabda" ? "SABDA" : "SANTO" }),
-            x.active ? null : h("span", { class: "badge off", text: "NONAKTIF" })),
-          h("div", { class: "txt", text: x.text }),
+            x.active ? null : h("span", { class: "badge off", text: "OFF" }),
+            h("span", { class: "txt1", text: x.text })),
           h("div", { class: "src", text: meta })),
         switchEl(x.active, function (on, input) {
           sb.from("quotes").update({ active: on }).eq("id", x.id).then(function (res) {
@@ -228,6 +253,10 @@
         })
       ));
     });
+    if (items.length > state.limit) {
+      list.appendChild(h("button", { class: "btn secondary block", type: "button", style: "margin-top:10px",
+        text: "Tampilkan " + Math.min(PAGE, items.length - state.limit) + " lagi", onclick: function () { state.limit += PAGE; drawList(); } }));
+    }
   }
 
   /* ---------------------------------------------------------------- editor kutipan */
@@ -377,26 +406,137 @@
     ctx.putImageData(img, 0, 0);
   }
 
+  function stopLive() { if (state.stopLive) { var f = state.stopLive; state.stopLive = null; f(); } }
+
+  // Hanya baris yang tampak seperti teks (cukup huruf) agar hasil bacaan langsung tidak berisi sampah.
+  function cleanLines(t) {
+    return String(t || "").split("\n").filter(function (ln) {
+      var letters = (ln.match(/\p{L}/gu) || []).length;
+      var visible = ln.replace(/\s/g, "").length;
+      return letters >= 3 && visible > 0 && letters / visible >= 0.5;
+    }).join("\n");
+  }
+
   function renderScanTab() {
-    var cam = h("input", { type: "file", accept: "image/*", capture: "environment", style: "display:none" });
     var gal = h("input", { type: "file", accept: "image/*", style: "display:none" });
+    var liveBox = h("div");
     var area = h("div");
-    function onFile(e) {
+    gal.addEventListener("change", function (e) {
       var f = e.target.files && e.target.files[0];
       e.target.value = "";
-      if (f) loadImage(f, area);
-    }
-    cam.addEventListener("change", onFile);
-    gal.addEventListener("change", onFile);
-
+      if (f) { stopLive(); clear(liveBox); loadImage(f, area); }
+    });
     state.main.appendChild(h("div", { class: "card" },
       h("h2", { text: "Pindai teks dari buku" }),
-      h("p", { class: "muted", text: "Foto halaman buku (cahaya cukup, tegak lurus), pilih bagian kutipan, lalu baca teksnya. Hasil bisa diedit sebelum disimpan." }),
-      h("div", { class: "row wrap" },
-        h("div", { class: "grow" }, h("button", { class: "btn block", type: "button", text: "\uD83D\uDCF7 Foto dengan kamera", onclick: function () { cam.click(); } })),
-        h("div", { class: "grow" }, h("button", { class: "btn secondary block", type: "button", text: "\uD83D\uDDBC\uFE0F Dari galeri", onclick: function () { gal.click(); } }))),
-      cam, gal));
+      h("p", { class: "muted", text: "Arahkan kamera ke teks. Bacaan muncul langsung seperti Google Lens; ketuk Ambil teks bila sudah benar." }),
+      h("button", { class: "btn block", type: "button", text: "\uD83D\uDCF7 Buka kamera (baca langsung)", onclick: function () { clear(area); startLive(liveBox, area); } }),
+      h("div", { class: "spacer" }),
+      h("button", { class: "btn secondary block", type: "button", text: "\uD83D\uDDBC\uFE0F Pilih foto dari galeri", onclick: function () { gal.click(); } }),
+      gal));
+    state.main.appendChild(liveBox);
     state.main.appendChild(area);
+  }
+
+  function startLive(box, resultBox) {
+    stopLive();
+    clear(box);
+    var md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia) { toast("Kamera tidak didukung browser ini. Gunakan foto dari galeri.", 5000); return; }
+    if (!window.Tesseract) { toast("Pembaca teks belum termuat. Periksa internet lalu muat ulang.", 5000); return; }
+
+    md.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }).then(function (stream) {
+      var running = true, worker = null, guideH = 0.34, lastText = "";
+      var video = h("video", { autoplay: true, playsinline: true });
+      video.muted = true;
+      video.srcObject = stream;
+      var guide = h("div", { class: "guide" });
+      var status = h("p", { class: "muted", text: "Menyiapkan pembaca teks (pertama kali mengunduh data bahasa \u00B1 10 MB)\u2026" });
+      var preview = h("div", { class: "livetext", text: "" });
+      var takeBtn = h("button", { class: "btn block", type: "button", text: "Ambil teks" });
+      takeBtn.disabled = true;
+
+      function applyGuide() {
+        guide.style.top = ((1 - guideH) / 2 * 100) + "%";
+        guide.style.height = (guideH * 100) + "%";
+      }
+      function close() {
+        running = false;
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* abaikan */ }
+        if (worker) { try { worker.terminate(); } catch (e2) { /* abaikan */ } worker = null; }
+        clear(box);
+      }
+      state.stopLive = close;
+
+      takeBtn.addEventListener("click", function () {
+        var t = lastText;
+        close();
+        state.stopLive = null;
+        showResult(resultBox, tidyText(t));
+      });
+
+      var tools = h("div", { class: "row wrap", style: "margin:8px 0" },
+        h("button", { class: "btn secondary small", type: "button", text: "\u25B2 Bingkai lebih tinggi", onclick: function () { guideH = Math.min(0.8, guideH + 0.08); applyGuide(); } }),
+        h("button", { class: "btn secondary small", type: "button", text: "\u25BC Lebih rendah", onclick: function () { guideH = Math.max(0.16, guideH - 0.08); applyGuide(); } }));
+      try {
+        var track = stream.getVideoTracks()[0];
+        var caps = track && track.getCapabilities ? track.getCapabilities() : {};
+        if (caps && caps.torch) {
+          var torchOn = false;
+          tools.appendChild(h("button", { class: "btn secondary small", type: "button", text: "\uD83D\uDD26 Senter", onclick: function () {
+            torchOn = !torchOn;
+            track.applyConstraints({ advanced: [{ torch: torchOn }] }).catch(function () { toast("Senter tidak tersedia"); });
+          } }));
+        }
+      } catch (e) { /* senter tidak wajib */ }
+
+      box.appendChild(h("div", { class: "card" },
+        h("div", { class: "livebox" }, video, guide),
+        tools, status, preview, h("div", { class: "spacer" }), takeBtn,
+        h("div", { class: "spacer" }),
+        h("button", { class: "btn secondary block", type: "button", text: "Tutup kamera", onclick: function () { close(); state.stopLive = null; } })));
+      applyGuide();
+
+      var canvas = document.createElement("canvas");
+      function loop() {
+        if (!running) return;
+        if (!video.videoWidth || video.readyState < 2) { setTimeout(loop, 300); return; }
+        var ready = worker ? Promise.resolve(worker) : window.Tesseract.createWorker(["ind", "eng"], 1, {
+          logger: function (m) {
+            if (running && m.status && m.status.indexOf("loading") === 0) status.textContent = "Menyiapkan pembaca teks\u2026 " + Math.round((m.progress || 0) * 100) + "%";
+          }
+        });
+        ready.then(function (w) {
+          if (!running) { try { w.terminate(); } catch (e) { /* abaikan */ } return null; }
+          worker = w;
+          var vw = video.videoWidth, vh = video.videoHeight;
+          var gh = vh * guideH, gy = (vh - gh) / 2, gx = vw * 0.05, gw = vw * 0.9;
+          var sc = Math.min(1, 1000 / gw);
+          canvas.width = Math.max(10, Math.round(gw * sc));
+          canvas.height = Math.max(10, Math.round(gh * sc));
+          var cx = canvas.getContext("2d");
+          cx.drawImage(video, gx, gy, gw, gh, 0, 0, canvas.width, canvas.height);
+          preprocess(cx, canvas.width, canvas.height);
+          return w.recognize(canvas);
+        }).then(function (res) {
+          if (!running || !res) return;
+          var t = cleanLines(res.data.text);
+          if (t.length >= 6) {
+            if (t !== lastText) { lastText = t; preview.textContent = t; }
+            status.textContent = "Teks terbaca. Ketuk Ambil teks, atau geser kamera untuk memperbarui.";
+            takeBtn.disabled = false;
+          } else if (!lastText) {
+            status.textContent = "Arahkan kamera ke teks di dalam bingkai\u2026";
+          }
+        }).catch(function (e) {
+          if (running) status.textContent = "Gagal membaca: " + errMessage(e);
+        }).then(function () {
+          if (running) setTimeout(loop, 250);
+        });
+      }
+      loop();
+    }).catch(function (e) {
+      toast("Kamera tidak bisa dibuka: " + (e && (e.message || e.name)) + ". Izinkan akses kamera di browser.", 6000);
+    });
   }
 
   function loadImage(file, area) {
@@ -640,6 +780,6 @@
     });
   }
 
-  window.__sabdamu = { tidyText: tidyText, preprocess: preprocess };
+  window.__sabdamu = { tidyText: tidyText, preprocess: preprocess, cleanLines: cleanLines };
   boot();
 })();
